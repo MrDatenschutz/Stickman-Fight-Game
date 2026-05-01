@@ -123,7 +123,7 @@ const STATE_GRAB   = "grab";
 const STATE_THROW  = "throw";
 const STATE_JUMP   = "jump";
 
-function makeFighter(x, color, facing) {
+function makeFighter(x, color, facing, maxHp) {
   return {
     x,
     y: groundY,
@@ -133,8 +133,8 @@ function makeFighter(x, color, facing) {
     vx: 0,
     vy: 0,
     speed: 3,
-    hp: 100,
-    maxHp: 100,
+    hp: maxHp,
+    maxHp: maxHp,
     facing,
     state: STATE_IDLE,
     frame: 0,
@@ -144,16 +144,14 @@ function makeFighter(x, color, facing) {
   };
 }
 
-let player = makeFighter(150, "#38bdf8", 1);
-let enemy  = makeFighter(600, "#f97316", -1);
-enemy.hp = enemy.maxHp = 130;
+let player = makeFighter(150, "#38bdf8", 1, 400);
+let enemy  = makeFighter(600, "#f97316", -1, 450);
 
 const keys = { ArrowLeft:false, ArrowRight:false, q:false, w:false, " ":false };
 
 function resetGame() {
-  player = makeFighter(150, "#38bdf8", 1);
-  enemy  = makeFighter(600, "#f97316", -1);
-  enemy.hp = enemy.maxHp = 130;
+  player = makeFighter(150, "#38bdf8", 1, 400);
+  enemy  = makeFighter(600, "#f97316", -1, 450);
   updateHpBars();
   gameRunning = false;
   startBtn.style.display = "block";
@@ -191,9 +189,8 @@ function drawStickman(f) {
   ctx.lineTo(cx + 10, f.y);
   ctx.stroke();
 
-  // Arme je nach Animation
+  // Arme Basis
   const dir = f.facing;
-
   ctx.beginPath();
   ctx.moveTo(cx, bodyTop + 20);
   ctx.lineTo(cx + 15 * dir, bodyTop + 30);
@@ -202,7 +199,7 @@ function drawStickman(f) {
   if (f.state === STATE_PUNCH || f.state === STATE_AIRPUNCH) {
     ctx.beginPath();
     ctx.moveTo(cx, bodyTop + 20);
-    let reach = [10, 20, 30, 15][f.frame];
+    let reach = [10, 20, 30, 15][f.frame] || 15;
     ctx.lineTo(cx + reach * dir, bodyTop + 15);
     ctx.stroke();
   }
@@ -210,7 +207,7 @@ function drawStickman(f) {
   if (f.state === STATE_KICK || f.state === STATE_AIRKICK) {
     ctx.beginPath();
     ctx.moveTo(cx, f.y);
-    let reach = [10, 20, 30, 15][f.frame];
+    let reach = [10, 20, 30, 15][f.frame] || 15;
     ctx.lineTo(cx + reach * dir, f.y + 5);
     ctx.stroke();
   }
@@ -303,7 +300,7 @@ function updateFighterAnimation(f, isPlayer) {
   if ([STATE_PUNCH, STATE_AIRPUNCH].includes(f.state)) {
     if (f.frame === 1 || f.frame === 2) {
       if (inFront(f, target, 45)) {
-        applyHit(f, target, isPlayer ? 10 : 7, isPlayer ? 6 : -4);
+        applyHit(f, target, isPlayer ? 8 : 6, isPlayer ? 5 : -4);
       }
     }
     if (f.frame > 3) f.state = STATE_IDLE;
@@ -312,7 +309,7 @@ function updateFighterAnimation(f, isPlayer) {
   if ([STATE_KICK, STATE_AIRKICK].includes(f.state)) {
     if (f.frame === 1 || f.frame === 2) {
       if (inFront(f, target, 60)) {
-        applyHit(f, target, isPlayer ? 14 : 9, isPlayer ? 10 : -6);
+        applyHit(f, target, isPlayer ? 12 : 8, isPlayer ? 8 : -5);
       }
     }
     if (f.frame > 3) f.state = STATE_IDLE;
@@ -327,7 +324,7 @@ function updateFighterAnimation(f, isPlayer) {
     target.grabbed = true;
     if (f.frame === 1 || f.frame === 2) {
       if (f.frameTimer === 0) {
-        target.hp = Math.max(0, target.hp - 4);
+        target.hp = Math.max(0, target.hp - 3);
         updateHpBars();
       }
     }
