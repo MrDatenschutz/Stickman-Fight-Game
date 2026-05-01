@@ -53,7 +53,7 @@
     background: #ef4444;
     width: 100%;
   }
-  #startBtn {
+  #startBtn, #resetBtn {
     margin-top: 10px;
     padding: 10px 20px;
     background: #38bdf8;
@@ -78,8 +78,9 @@
 <body>
 
 <h1>Stickman Fight</h1>
-<div>← → laufen · Q schlagen · W treten</div>
+<div>← → laufen · Q schlagen · W treten · SPACE springen</div>
 <button id="startBtn">Start</button>
+<button id="resetBtn" style="display:none;">Reset</button>
 
 <div id="gameContainer">
   <canvas id="game" width="800" height="400"></canvas>
@@ -104,16 +105,23 @@ const playerHpBar = document.getElementById("playerHpBar");
 const enemyHpBar = document.getElementById("enemyHpBar");
 const countdownEl = document.getElementById("countdown");
 const startBtn = document.getElementById("startBtn");
+const resetBtn = document.getElementById("resetBtn");
 
 let gameRunning = false;
 const groundY = 340;
 
+const GRAVITY = 0.7;
+const JUMP_FORCE = -14;
+
 const STATE_IDLE   = "idle";
 const STATE_PUNCH  = "punch";
 const STATE_KICK   = "kick";
+const STATE_AIRPUNCH = "airpunch";
+const STATE_AIRKICK  = "airkick";
 const STATE_HIT    = "hit";
 const STATE_GRAB   = "grab";
 const STATE_THROW  = "throw";
+const STATE_JUMP   = "jump";
 
 function makeFighter(x, color, facing) {
   return {
@@ -123,6 +131,7 @@ function makeFighter(x, color, facing) {
     height: 60,
     color,
     vx: 0,
+    vy: 0,
     speed: 3,
     hp: 100,
     maxHp: 100,
@@ -130,15 +139,26 @@ function makeFighter(x, color, facing) {
     state: STATE_IDLE,
     frame: 0,
     frameTimer: 0,
-    grabbed: false
+    grabbed: false,
+    onGround: true
   };
 }
 
-const player = makeFighter(150, "#38bdf8", 1);
-const enemy  = makeFighter(600, "#f97316", -1);
-enemy.hp = enemy.maxHp = 130; // etwas stärker
+let player = makeFighter(150, "#38bdf8", 1);
+let enemy  = makeFighter(600, "#f97316", -1);
+enemy.hp = enemy.maxHp = 130;
 
-const keys = { ArrowLeft:false, ArrowRight:false, q:false, w:false };
+const keys = { ArrowLeft:false, ArrowRight:false, q:false, w:false, " ":false };
+
+function resetGame() {
+  player = makeFighter(150, "#38bdf8", 1);
+  enemy  = makeFighter(600, "#f97316", -1);
+  enemy.hp = enemy.maxHp = 130;
+  updateHpBars();
+  gameRunning = false;
+  startBtn.style.display = "block";
+  resetBtn.style.display = "none";
+}
 
 function updateHpBars() {
   playerHpBar.style.width = (player.hp / player.maxHp * 100) + "%";
@@ -163,7 +183,7 @@ function drawStickman(f) {
   ctx.lineTo(cx, bodyTop + 40);
   ctx.stroke();
 
-  // Beine (Basis)
+  // Beine
   ctx.beginPath();
   ctx.moveTo(cx, bodyTop + 40);
   ctx.lineTo(cx - 10, f.y);
@@ -171,34 +191,34 @@ function drawStickman(f) {
   ctx.lineTo(cx + 10, f.y);
   ctx.stroke();
 
-  // Arme/Beine je nach State/Frame
+  // Arme je nach Animation
   const dir = f.facing;
 
-  // Idle / Hit / Grab / Throw Grundarm
   ctx.beginPath();
   ctx.moveTo(cx, bodyTop + 20);
   ctx.lineTo(cx + 15 * dir, bodyTop + 30);
   ctx.stroke();
 
-  if (f.state === STATE_PUNCH) {
-    // 4 Frames: 0 = ausholen, 1–2 = Treffer, 3 = zurück
+  if (f.state === STATE_PUNCH || f.state === STATE_AIRPUNCH) {
     ctx.beginPath();
     ctx.moveTo(cx, bodyTop + 20);
-    let reach = 15;
-    if (f.frame === 1 || f.frame === 2) reach = 30;
-    if (f.frame === 0) reach = 10;
+    let reach = [10, 20, 30, 15][f.frame];
     ctx.lineTo(cx + reach * dir, bodyTop + 15);
     ctx.stroke();
   }
 
-  if (f.state === STATE_KICK) {
-    // 4 Frames: 0 = Bein hebt, 1–2 = ausgestreckt, 3 = zurück
+  if (f.state === STATE_KICK || f.state === STATE_AIRKICK) {
     ctx.beginPath();
     ctx.moveTo(cx, f.y);
-    let reach = 10;
-    if (f.frame === 1 || f.frame === 2) reach = 30;
-    if (f.frame === 0) reach = 15;
+    let reach = [10, 20, 30, 15][f.frame];
     ctx.lineTo(cx + reach * dir, f.y + 5);
+    ctx.stroke();
+  }
+
+  if (f.state === STATE_HIT) {
+    ctx.beginPath();
+    ctx.moveTo(cx, bodyTop + 20);
+    ctx.lineTo(cx - 10 * dir, bodyTop + 25);
     ctx.stroke();
   }
 
@@ -215,14 +235,6 @@ function drawStickman(f) {
     ctx.lineTo(cx + 30 * dir, bodyTop + 5);
     ctx.stroke();
   }
-
-  if (f.state === STATE_HIT) {
-    // kleiner Rückstoß
-    ctx.beginPath();
-    ctx.moveTo(cx, bodyTop + 20);
-    ctx.lineTo(cx - 10 * dir, bodyTop + 25);
-    ctx.stroke();
-  }
 }
 
 function startAnimation(f, state) {
@@ -235,6 +247,7 @@ function handleInput() {
   if (player.grabbed) return;
 
   player.vx = 0;
+
   if (keys.ArrowLeft) {
     player.vx = -player.speed;
     player.facing = -1;
@@ -244,11 +257,17 @@ function handleInput() {
     player.facing = 1;
   }
 
-  if (player.state === STATE_IDLE || player.state === STATE_HIT) {
+  if (keys[" "] && player.onGround) {
+    player.vy = JUMP_FORCE;
+    player.onGround = false;
+    startAnimation(player, STATE_JUMP);
+  }
+
+  if (player.state === STATE_IDLE || player.state === STATE_JUMP) {
     if (keys.q) {
-      startAnimation(player, STATE_PUNCH);
+      startAnimation(player, player.onGround ? STATE_PUNCH : STATE_AIRPUNCH);
     } else if (keys.w) {
-      startAnimation(player, STATE_KICK);
+      startAnimation(player, player.onGround ? STATE_KICK : STATE_AIRKICK);
     }
   }
 }
@@ -265,7 +284,7 @@ function inFront(attacker, target, range) {
 
 function applyHit(attacker, target, dmg, knockback) {
   target.hp = Math.max(0, target.hp - dmg);
-  target.x += knockback * (attacker.facing);
+  target.x += knockback * attacker.facing;
   startAnimation(target, STATE_HIT);
   updateHpBars();
 }
@@ -274,61 +293,45 @@ function updateFighterAnimation(f, isPlayer) {
   if (f.state === STATE_IDLE) return;
 
   f.frameTimer++;
-  if (f.frameTimer >= 4) { // 4 Ticks pro Frame
+  if (f.frameTimer >= 7) {
     f.frameTimer = 0;
     f.frame++;
   }
 
-  if (f.state === STATE_PUNCH) {
-    // Trefferfenster bei Frame 1 & 2
+  const target = isPlayer ? enemy : player;
+
+  if ([STATE_PUNCH, STATE_AIRPUNCH].includes(f.state)) {
     if (f.frame === 1 || f.frame === 2) {
-      const target = isPlayer ? enemy : player;
       if (inFront(f, target, 45)) {
         applyHit(f, target, isPlayer ? 10 : 7, isPlayer ? 6 : -4);
       }
     }
-    if (f.frame > 3) {
-      f.state = STATE_IDLE;
-      f.frame = 0;
-    }
+    if (f.frame > 3) f.state = STATE_IDLE;
   }
 
-  if (f.state === STATE_KICK) {
-    // Trefferfenster bei Frame 1 & 2
+  if ([STATE_KICK, STATE_AIRKICK].includes(f.state)) {
     if (f.frame === 1 || f.frame === 2) {
-      const target = isPlayer ? enemy : player;
       if (inFront(f, target, 60)) {
         applyHit(f, target, isPlayer ? 14 : 9, isPlayer ? 10 : -6);
       }
     }
-    if (f.frame > 3) {
-      f.state = STATE_IDLE;
-      f.frame = 0;
-    }
+    if (f.frame > 3) f.state = STATE_IDLE;
   }
 
-  if (f.state === STATE_HIT) {
-    if (f.frame > 2) {
-      f.state = STATE_IDLE;
-      f.frame = 0;
-    }
-  }
+  if (f.state === STATE_HIT && f.frame > 2) f.state = STATE_IDLE;
+
+  if (f.state === STATE_JUMP && f.onGround) f.state = STATE_IDLE;
 
   if (f.state === STATE_GRAB) {
-    if (isPlayer) return; // nur Gegner greift
-    const target = player;
-    // während Grab: Spieler an Gegner "kleben"
     target.x = f.x + f.facing * 25;
     target.grabbed = true;
-
     if (f.frame === 1 || f.frame === 2) {
-      if (f.frameTimer === 0) { // alle 4 Ticks
+      if (f.frameTimer === 0) {
         target.hp = Math.max(0, target.hp - 4);
         updateHpBars();
       }
     }
     if (f.frame > 3) {
-      // Wurf einleiten
       startAnimation(f, STATE_THROW);
       target.grabbed = false;
       target.x += f.facing * 80;
@@ -336,12 +339,7 @@ function updateFighterAnimation(f, isPlayer) {
     }
   }
 
-  if (f.state === STATE_THROW) {
-    if (f.frame > 2) {
-      f.state = STATE_IDLE;
-      f.frame = 0;
-    }
-  }
+  if (f.state === STATE_THROW && f.frame > 2) f.state = STATE_IDLE;
 }
 
 function enemyAI() {
@@ -351,19 +349,14 @@ function enemyAI() {
   enemy.vx = 0;
 
   if (enemy.state === STATE_IDLE || enemy.state === STATE_HIT) {
-    if (dist > 90) {
+    if (dist > 120) {
       enemy.vx = (player.x > enemy.x ? enemy.speed : -enemy.speed);
       enemy.facing = player.x > enemy.x ? 1 : -1;
     } else {
-      // Entscheidung: Punch, Kick oder Grab
       const r = Math.random();
-      if (r < 0.04) {
-        startAnimation(enemy, STATE_PUNCH);
-      } else if (r < 0.07) {
-        startAnimation(enemy, STATE_KICK);
-      } else if (r < 0.09 && dist < 70) {
-        startAnimation(enemy, STATE_GRAB);
-      }
+      if (r < 0.04) startAnimation(enemy, STATE_PUNCH);
+      else if (r < 0.07) startAnimation(enemy, STATE_KICK);
+      else if (r < 0.09 && dist < 70 && player.onGround) startAnimation(enemy, STATE_GRAB);
     }
   }
 }
@@ -377,6 +370,15 @@ function update() {
   player.x += player.vx;
   enemy.x  += enemy.vx;
 
+  player.vy += GRAVITY;
+  player.y += player.vy;
+
+  if (player.y >= groundY) {
+    player.y = groundY;
+    player.vy = 0;
+    player.onGround = true;
+  }
+
   player.x = Math.max(40, Math.min(canvas.width - 60, player.x));
   enemy.x  = Math.max(40, Math.min(canvas.width - 60, enemy.x));
 
@@ -387,7 +389,6 @@ function update() {
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Boden
   ctx.strokeStyle = "#1f2937";
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -404,6 +405,7 @@ function draw() {
     ctx.textAlign = "center";
     const msg = player.hp <= 0 ? "Du wurdest besiegt!" : "Du hast gewonnen!";
     ctx.fillText(msg, canvas.width / 2, 80);
+    resetBtn.style.display = "block";
   }
 }
 
@@ -417,15 +419,10 @@ loop();
 updateHpBars();
 
 window.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowLeft" || e.key === "ArrowRight") keys[e.key] = true;
-  if (e.key === "q" || e.key === "Q") keys.q = true;
-  if (e.key === "w" || e.key === "W") keys.w = true;
+  if (e.key in keys) keys[e.key] = true;
 });
-
 window.addEventListener("keyup", (e) => {
-  if (e.key === "ArrowLeft" || e.key === "ArrowRight") keys[e.key] = false;
-  if (e.key === "q" || e.key === "Q") keys.q = false;
-  if (e.key === "w" || e.key === "W") keys.w = false;
+  if (e.key in keys) keys[e.key] = false;
 });
 
 startBtn.addEventListener("click", () => {
@@ -435,17 +432,16 @@ startBtn.addEventListener("click", () => {
 
   const interval = setInterval(() => {
     count--;
-    if (count === 0) {
-      countdownEl.textContent = "GO!";
-    } else if (count < 0) {
+    if (count === 0) countdownEl.textContent = "GO!";
+    else if (count < 0) {
       countdownEl.textContent = "";
       clearInterval(interval);
       gameRunning = true;
-    } else {
-      countdownEl.textContent = count;
-    }
+    } else countdownEl.textContent = count;
   }, 1000);
 });
+
+resetBtn.addEventListener("click", resetGame);
 </script>
 
 </body>
