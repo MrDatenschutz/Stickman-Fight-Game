@@ -53,7 +53,6 @@
     background: #ef4444;
     width: 100%;
   }
-
   #startBtn {
     margin-top: 10px;
     padding: 10px 20px;
@@ -79,7 +78,7 @@
 <body>
 
 <h1>Stickman Fight</h1>
-
+<div>← → laufen · Q schlagen · W treten</div>
 <button id="startBtn">Start</button>
 
 <div id="gameContainer">
@@ -103,116 +102,133 @@ const ctx = canvas.getContext("2d");
 
 const playerHpBar = document.getElementById("playerHpBar");
 const enemyHpBar = document.getElementById("enemyHpBar");
-
 const countdownEl = document.getElementById("countdown");
 const startBtn = document.getElementById("startBtn");
 
 let gameRunning = false;
-
 const groundY = 340;
 
-const player = {
-  x: 150,
-  y: groundY,
-  width: 20,
-  height: 60,
-  color: "#38bdf8",
-  vx: 0,
-  speed: 3,
-  hp: 100,
-  maxHp: 100,
-  facing: 1,
-  punching: false,
-  kicking: false,
-  attackTimer: 0,
-  grabbed: false
-};
+const STATE_IDLE   = "idle";
+const STATE_PUNCH  = "punch";
+const STATE_KICK   = "kick";
+const STATE_HIT    = "hit";
+const STATE_GRAB   = "grab";
+const STATE_THROW  = "throw";
 
-const enemy = {
-  x: 600,
-  y: groundY,
-  width: 20,
-  height: 60,
-  color: "#f97316",
-  vx: 0,
-  speed: 2.5,
-  hp: 120,
-  maxHp: 120,
-  facing: -1,
-  punching: false,
-  kicking: false,
-  grabbing: false,
-  grabTimer: 0,
-  attackTimer: 0
-};
+function makeFighter(x, color, facing) {
+  return {
+    x,
+    y: groundY,
+    width: 20,
+    height: 60,
+    color,
+    vx: 0,
+    speed: 3,
+    hp: 100,
+    maxHp: 100,
+    facing,
+    state: STATE_IDLE,
+    frame: 0,
+    frameTimer: 0,
+    grabbed: false
+  };
+}
 
-const keys = {
-  ArrowLeft: false,
-  ArrowRight: false,
-  q: false,
-  w: false
-};
+const player = makeFighter(150, "#38bdf8", 1);
+const enemy  = makeFighter(600, "#f97316", -1);
+enemy.hp = enemy.maxHp = 130; // etwas stärker
+
+const keys = { ArrowLeft:false, ArrowRight:false, q:false, w:false };
 
 function updateHpBars() {
   playerHpBar.style.width = (player.hp / player.maxHp * 100) + "%";
-  enemyHpBar.style.width = (enemy.hp / enemy.maxHp * 100) + "%";
+  enemyHpBar.style.width  = (enemy.hp  / enemy.maxHp  * 100) + "%";
 }
 
-function drawStickman(obj) {
-  const bodyTop = obj.y - obj.height;
-  const centerX = obj.x + obj.width / 2;
+function drawStickman(f) {
+  const bodyTop = f.y - f.height;
+  const cx = f.x + f.width / 2;
 
-  ctx.strokeStyle = obj.color;
+  ctx.strokeStyle = f.color;
   ctx.lineWidth = 3;
 
   // Kopf
   ctx.beginPath();
-  ctx.arc(centerX, bodyTop, 8, 0, Math.PI * 2);
+  ctx.arc(cx, bodyTop, 8, 0, Math.PI * 2);
   ctx.stroke();
 
   // Körper
   ctx.beginPath();
-  ctx.moveTo(centerX, bodyTop + 10);
-  ctx.lineTo(centerX, bodyTop + 40);
+  ctx.moveTo(cx, bodyTop + 10);
+  ctx.lineTo(cx, bodyTop + 40);
   ctx.stroke();
 
-  // Beine
+  // Beine (Basis)
   ctx.beginPath();
-  ctx.moveTo(centerX, bodyTop + 40);
-  ctx.lineTo(centerX - 10, obj.y);
-  ctx.moveTo(centerX, bodyTop + 40);
-  ctx.lineTo(centerX + 10, obj.y);
+  ctx.moveTo(cx, bodyTop + 40);
+  ctx.lineTo(cx - 10, f.y);
+  ctx.moveTo(cx, bodyTop + 40);
+  ctx.lineTo(cx + 10, f.y);
   ctx.stroke();
 
-  // Arme normal
+  // Arme/Beine je nach State/Frame
+  const dir = f.facing;
+
+  // Idle / Hit / Grab / Throw Grundarm
   ctx.beginPath();
-  ctx.moveTo(centerX, bodyTop + 20);
-  ctx.lineTo(centerX + 15 * obj.facing, bodyTop + 30);
+  ctx.moveTo(cx, bodyTop + 20);
+  ctx.lineTo(cx + 15 * dir, bodyTop + 30);
   ctx.stroke();
 
-  // Schlag
-  if (obj.punching) {
+  if (f.state === STATE_PUNCH) {
+    // 4 Frames: 0 = ausholen, 1–2 = Treffer, 3 = zurück
     ctx.beginPath();
-    ctx.moveTo(centerX, bodyTop + 20);
-    ctx.lineTo(centerX + 25 * obj.facing, bodyTop + 15);
+    ctx.moveTo(cx, bodyTop + 20);
+    let reach = 15;
+    if (f.frame === 1 || f.frame === 2) reach = 30;
+    if (f.frame === 0) reach = 10;
+    ctx.lineTo(cx + reach * dir, bodyTop + 15);
     ctx.stroke();
   }
 
-  // Tritt (kein 3-Beine-Bug)
-  if (obj.kicking) {
+  if (f.state === STATE_KICK) {
+    // 4 Frames: 0 = Bein hebt, 1–2 = ausgestreckt, 3 = zurück
     ctx.beginPath();
-    ctx.moveTo(centerX, obj.y);
-    ctx.lineTo(centerX + 25 * obj.facing, obj.y + 5);
+    ctx.moveTo(cx, f.y);
+    let reach = 10;
+    if (f.frame === 1 || f.frame === 2) reach = 30;
+    if (f.frame === 0) reach = 15;
+    ctx.lineTo(cx + reach * dir, f.y + 5);
     ctx.stroke();
   }
 
-  // Gegner packt Spieler
-  if (obj.grabbing) {
+  if (f.state === STATE_GRAB) {
     ctx.beginPath();
-    ctx.moveTo(centerX, bodyTop + 20);
-    ctx.lineTo(centerX + 30 * obj.facing, bodyTop + 10);
+    ctx.moveTo(cx, bodyTop + 20);
+    ctx.lineTo(cx + 25 * dir, bodyTop + 10);
     ctx.stroke();
   }
+
+  if (f.state === STATE_THROW) {
+    ctx.beginPath();
+    ctx.moveTo(cx, bodyTop + 20);
+    ctx.lineTo(cx + 30 * dir, bodyTop + 5);
+    ctx.stroke();
+  }
+
+  if (f.state === STATE_HIT) {
+    // kleiner Rückstoß
+    ctx.beginPath();
+    ctx.moveTo(cx, bodyTop + 20);
+    ctx.lineTo(cx - 10 * dir, bodyTop + 25);
+    ctx.stroke();
+  }
+}
+
+function startAnimation(f, state) {
+  f.state = state;
+  f.frame = 0;
+  f.frameTimer = 0;
 }
 
 function handleInput() {
@@ -228,66 +244,126 @@ function handleInput() {
     player.facing = 1;
   }
 
-  if (keys.q && !player.punching && !player.kicking) {
-    player.punching = true;
-    player.attackTimer = 10;
-    playerAttack("punch");
-  }
-  if (keys.w && !player.punching && !player.kicking) {
-    player.kicking = true;
-    player.attackTimer = 12;
-    playerAttack("kick");
+  if (player.state === STATE_IDLE || player.state === STATE_HIT) {
+    if (keys.q) {
+      startAnimation(player, STATE_PUNCH);
+    } else if (keys.w) {
+      startAnimation(player, STATE_KICK);
+    }
   }
 }
 
-function playerAttack(type) {
-  const range = type === "punch" ? 40 : 50;
-  const damage = type === "punch" ? 8 : 12;
+function distance(a, b) {
+  return Math.abs(a.x - b.x);
+}
 
-  const dx = enemy.x - player.x;
-  const inFront = (player.facing === 1 && dx > 0) || (player.facing === -1 && dx < 0);
-  const dist = Math.abs(dx);
+function inFront(attacker, target, range) {
+  const dx = target.x - attacker.x;
+  const front = (attacker.facing === 1 && dx > 0) || (attacker.facing === -1 && dx < 0);
+  return front && Math.abs(dx) < range;
+}
 
-  if (inFront && dist < range) {
-    enemy.hp = Math.max(0, enemy.hp - damage);
-    updateHpBars();
+function applyHit(attacker, target, dmg, knockback) {
+  target.hp = Math.max(0, target.hp - dmg);
+  target.x += knockback * (attacker.facing);
+  startAnimation(target, STATE_HIT);
+  updateHpBars();
+}
+
+function updateFighterAnimation(f, isPlayer) {
+  if (f.state === STATE_IDLE) return;
+
+  f.frameTimer++;
+  if (f.frameTimer >= 4) { // 4 Ticks pro Frame
+    f.frameTimer = 0;
+    f.frame++;
+  }
+
+  if (f.state === STATE_PUNCH) {
+    // Trefferfenster bei Frame 1 & 2
+    if (f.frame === 1 || f.frame === 2) {
+      const target = isPlayer ? enemy : player;
+      if (inFront(f, target, 45)) {
+        applyHit(f, target, isPlayer ? 10 : 7, isPlayer ? 6 : -4);
+      }
+    }
+    if (f.frame > 3) {
+      f.state = STATE_IDLE;
+      f.frame = 0;
+    }
+  }
+
+  if (f.state === STATE_KICK) {
+    // Trefferfenster bei Frame 1 & 2
+    if (f.frame === 1 || f.frame === 2) {
+      const target = isPlayer ? enemy : player;
+      if (inFront(f, target, 60)) {
+        applyHit(f, target, isPlayer ? 14 : 9, isPlayer ? 10 : -6);
+      }
+    }
+    if (f.frame > 3) {
+      f.state = STATE_IDLE;
+      f.frame = 0;
+    }
+  }
+
+  if (f.state === STATE_HIT) {
+    if (f.frame > 2) {
+      f.state = STATE_IDLE;
+      f.frame = 0;
+    }
+  }
+
+  if (f.state === STATE_GRAB) {
+    if (isPlayer) return; // nur Gegner greift
+    const target = player;
+    // während Grab: Spieler an Gegner "kleben"
+    target.x = f.x + f.facing * 25;
+    target.grabbed = true;
+
+    if (f.frame === 1 || f.frame === 2) {
+      if (f.frameTimer === 0) { // alle 4 Ticks
+        target.hp = Math.max(0, target.hp - 4);
+        updateHpBars();
+      }
+    }
+    if (f.frame > 3) {
+      // Wurf einleiten
+      startAnimation(f, STATE_THROW);
+      target.grabbed = false;
+      target.x += f.facing * 80;
+      applyHit(f, target, 6, 0);
+    }
+  }
+
+  if (f.state === STATE_THROW) {
+    if (f.frame > 2) {
+      f.state = STATE_IDLE;
+      f.frame = 0;
+    }
   }
 }
 
 function enemyAI() {
   if (enemy.hp <= 0 || player.hp <= 0) return;
 
-  const dx = player.x - enemy.x;
-  const dist = Math.abs(dx);
-
+  const dist = distance(enemy, player);
   enemy.vx = 0;
 
-  if (!enemy.grabbing) {
-    if (dist > 70) {
-      enemy.vx = dx > 0 ? enemy.speed : -enemy.speed;
-      enemy.facing = dx > 0 ? 1 : -1;
+  if (enemy.state === STATE_IDLE || enemy.state === STATE_HIT) {
+    if (dist > 90) {
+      enemy.vx = (player.x > enemy.x ? enemy.speed : -enemy.speed);
+      enemy.facing = player.x > enemy.x ? 1 : -1;
     } else {
-      if (Math.random() < 0.02) {
-        enemy.grabbing = true;
-        enemy.grabTimer = 60;
-        player.grabbed = true;
+      // Entscheidung: Punch, Kick oder Grab
+      const r = Math.random();
+      if (r < 0.04) {
+        startAnimation(enemy, STATE_PUNCH);
+      } else if (r < 0.07) {
+        startAnimation(enemy, STATE_KICK);
+      } else if (r < 0.09 && dist < 70) {
+        startAnimation(enemy, STATE_GRAB);
       }
-    }
-  }
-
-  if (enemy.grabbing) {
-    player.x = enemy.x + enemy.facing * 30;
-
-    if (enemy.grabTimer % 10 === 0) {
-      player.hp = Math.max(0, player.hp - 4);
-      updateHpBars();
-    }
-
-    enemy.grabTimer--;
-    if (enemy.grabTimer <= 0) {
-      enemy.grabbing = false;
-      player.grabbed = false;
-      player.x += enemy.facing * 80;
     }
   }
 }
@@ -299,31 +375,19 @@ function update() {
   enemyAI();
 
   player.x += player.vx;
-  enemy.x += enemy.vx;
+  enemy.x  += enemy.vx;
 
   player.x = Math.max(40, Math.min(canvas.width - 60, player.x));
-  enemy.x = Math.max(40, Math.min(canvas.width - 60, enemy.x));
+  enemy.x  = Math.max(40, Math.min(canvas.width - 60, enemy.x));
 
-  if (player.attackTimer > 0) {
-    player.attackTimer--;
-    if (player.attackTimer === 0) {
-      player.punching = false;
-      player.kicking = false;
-    }
-  }
-
-  if (enemy.attackTimer > 0) {
-    enemy.attackTimer--;
-    if (enemy.attackTimer === 0) {
-      enemy.punching = false;
-      enemy.kicking = false;
-    }
-  }
+  updateFighterAnimation(player, true);
+  updateFighterAnimation(enemy, false);
 }
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  // Boden
   ctx.strokeStyle = "#1f2937";
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -350,6 +414,7 @@ function loop() {
 }
 
 loop();
+updateHpBars();
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") keys[e.key] = true;
@@ -365,7 +430,6 @@ window.addEventListener("keyup", (e) => {
 
 startBtn.addEventListener("click", () => {
   startBtn.style.display = "none";
-
   let count = 3;
   countdownEl.textContent = count;
 
